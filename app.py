@@ -9,9 +9,12 @@ load_dotenv()
 app = Flask(__name__)
 
 WEBEX_TOKEN = os.getenv("WEBEX_BOT_TOKEN")
+
+# Halo config
 HALO_CLIENT_ID = os.getenv("HALO_CLIENT_ID")
 HALO_CLIENT_SECRET = os.getenv("HALO_CLIENT_SECRET")
-HALO_API_BASE = os.getenv("HALO_API_BASE")
+HALO_API_BASE = os.getenv("HALO_API_BASE")     # e.g. https://bncuat.halopsa.com/api
+HALO_AUTH_URL = os.getenv("HALO_AUTH_URL")    # e.g. https://bncuat.halopsa.com/api/oauth2/token OR /auth/token
 
 WEBEX_HEADERS = {
     "Authorization": f"Bearer {WEBEX_TOKEN}",
@@ -21,8 +24,7 @@ WEBEX_HEADERS = {
 def get_halo_access_token():
     """Authenticate with Halo API to get an access token"""
     resp = requests.post(
-        f"{HALO_API_BASE}/auth
-",
+        HALO_AUTH_URL,   # <-- use the full URL from .env
         data={
             "grant_type": "client_credentials",
             "client_id": HALO_CLIENT_ID,
@@ -31,13 +33,13 @@ def get_halo_access_token():
         },
     )
     resp.raise_for_status()
-    return resp.json()["access_token"]
+    return resp.json().get("access_token")
 
 def create_halo_ticket(summary, description):
     """Create a ticket in Halo"""
     token = get_halo_access_token()
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    payload = {"Summary": summary, "Details": description, "TypeID": 1}  # adjust TypeID!
+    payload = {"Summary": summary, "Details": description, "TypeID": 1}
     resp = requests.post(f"{HALO_API_BASE}/Ticket", json=payload, headers=headers)
     resp.raise_for_status()
     return resp.json()
@@ -72,5 +74,3 @@ def webex_webhook():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
-
-
