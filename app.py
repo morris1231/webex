@@ -21,7 +21,8 @@ WEBEX_HEADERS = {
 def get_halo_access_token():
     """Authenticate with Halo API to get an access token"""
     resp = requests.post(
-        f"{HALO_API_BASE}/oauth2/token",
+        f"{HALO_API_BASE}/auth
+",
         data={
             "grant_type": "client_credentials",
             "client_id": HALO_CLIENT_ID,
@@ -71,4 +72,5 @@ def webex_webhook():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
+
 
