@@ -69,6 +69,6 @@ def webex_webhook():
     return {"status": "ignored"}, 200
 
 if __name__ == "__main__":
-    # Render requires binding to 0.0.0.0 and using the PORT env variable
-    port = int(os.getenv("PORT", 5000))  # Render injects PORT dynamically
+    port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
+
