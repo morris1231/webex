@@ -1,98 +1,101 @@
 import os
-from flask import Flask, request
 import requests
+from flask import Flask, request
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load env vars
 load_dotenv()
-
 app = Flask(__name__)
 
-# --- ENV Variables ---
+# Webex
 WEBEX_TOKEN = os.getenv("WEBEX_BOT_TOKEN")
 
+# Halo
 HALO_CLIENT_ID = os.getenv("HALO_CLIENT_ID")
 HALO_CLIENT_SECRET = os.getenv("HALO_CLIENT_SECRET")
-HALO_API_BASE = os.getenv("HALO_API_BASE")     # e.g. https://bncuat.halopsa.com/api
-HALO_AUTH_URL = os.getenv("HALO_AUTH_URL")    # e.g. https://bncuat.halopsa.com/auth
+HALO_API_BASE = os.getenv("HALO_API_BASE")        # e.g. https://bncuat.halopsa.com/api
+HALO_AUTH_URL = os.getenv("HALO_AUTH_URL", "")    # optional; if empty → APIKey mode
+HALO_AUTH_MODE = os.getenv("HALO_AUTH_MODE", "apikey")  # "oauth" or "apikey"
 
-# --- Headers ---
 WEBEX_HEADERS = {
     "Authorization": f"Bearer {WEBEX_TOKEN}",
     "Content-Type": "application/json"
 }
 
 
-def get_halo_access_token():
-    """Authenticate with Halo API to get an access token from /auth"""
-    resp = requests.post(
-        HALO_AUTH_URL,
-        data={
+def get_halo_headers():
+    """Return headers for calling Halo API based on auth mode."""
+    if HALO_AUTH_MODE.lower() == "oauth" and HALO_AUTH_URL:
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        payload = {
             "grant_type": "client_credentials",
             "client_id": HALO_CLIENT_ID,
             "client_secret": HALO_CLIENT_SECRET,
-            "scope": "all",
-        },
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    print("🔑 Halo token response:", data, flush=True)
-    return data["access_token"]
+            "scope": "all"
+        }
+        resp = requests.post(HALO_AUTH_URL, headers=headers, data=payload)
+        print("🔑 Halo auth response:", resp.status_code, resp.text, flush=True)
+        resp.raise_for_status()
+        try:
+            token = resp.json().get("access_token")
+            return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        except Exception:
+            raise RuntimeError(f"⚠️ Halo auth returned non-JSON: {resp.text}")
+    else:
+        # APIKey direct mode
+        return {"APIKey": HALO_CLIENT_SECRET, "Content-Type": "application/json"}
 
 
 def create_halo_ticket(summary, description):
-    """Create a ticket in Halo"""
-    token = get_halo_access_token()
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    payload = {
-        "Summary": summary,
-        "Details": description,
-        "TypeID": 1  # ✅ adjust to match a valid TypeID in your Halo config
-    }
-    resp = requests.post(f"{HALO_API_BASE}/Ticket", json=payload, headers=headers)
+    """Create a Halo ticket"""
+    headers = get_halo_headers()
+    payload = {"Summary": summary, "Details": description, "TypeID": 1}  # adjust TypeID for your config
+    resp = requests.post(f"{HALO_API_BASE}/Ticket", headers=headers, json=payload)
+    print("🎫 Halo ticket response:", resp.status_code, resp.text, flush=True)
     resp.raise_for_status()
-    data = resp.json()
-    print("🎫 Halo ticket response:", data, flush=True)
-    return data
+    return resp.json()
 
 
 @app.route("/webex", methods=["POST"])
 def webex_webhook():
-    """Handler for Webex Webhook -> Halo Ticket"""
+    """Handle Webex webhook → create Halo ticket"""
     data = request.json
     print("🚀 Webex webhook payload:", data, flush=True)
 
-    message_id = data["data"]["id"]
+    message_id = data.get("data", {}).get("id")
+    if not message_id:
+        return {"status": "ignored", "reason": "missing message id"}, 400
 
-    # Fetch full message text from Webex
+    # Fetch original Webex message
     msg = requests.get(f"https://webexapis.com/v1/messages/{message_id}", headers=WEBEX_HEADERS)
     msg.raise_for_status()
     body = msg.json()
     text = body.get("text", "")
-    room_id = body["roomId"]
+    room_id = body.get("roomId")
 
-    if text:
-        print("📩 Webex message text:", text, flush=True)
-        ticket = create_halo_ticket("Webex Bot Ticket", text)
+    if not text:
+        return {"status": "ignored", "reason": "no text"}, 200
 
-        # Confirmation back into Webex
-        conf = f"✅ Halo ticket aangemaakt: {ticket.get('ID', 'onbekend')}"
-        res = requests.post(
-            "https://webexapis.com/v1/messages",
-            headers=WEBEX_HEADERS,
-            json={"roomId": room_id, "text": conf},
-        )
-        print("📤 Webex response:", res.json(), flush=True)
+    print("📩 Webex message text:", text, flush=True)
 
-        return {"status": "ticket created", "ticket": ticket}, 201
+    # Create ticket in Halo
+    ticket = create_halo_ticket("Webex Bot Ticket", text)
 
-    return {"status": "ignored"}, 200
+    # Reply into Webex
+    conf_msg = f"✅ Halo ticket aangemaakt met ID: {ticket.get('ID', 'onbekend')}"
+    res = requests.post(
+        "https://webexapis.com/v1/messages",
+        headers=WEBEX_HEADERS,
+        json={"roomId": room_id, "text": conf_msg}
+    )
+    print("📤 Webex reply:", res.status_code, res.text, flush=True)
+
+    return {"status": "ticket created", "halo_ticket": ticket}, 201
 
 
 @app.route("/", methods=["GET"])
-def health():
-    """Health check for Render"""
-    return {"status": "ok", "message": "Webex → Halo bot is running!"}
+def healthcheck():
+    return {"status": "ok", "message": "Webex → Halo bot is running"}
 
 
 if __name__ == "__main__":
